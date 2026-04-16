@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Motor Metrics — Predictive Maintenance</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-primary: #0a0e14;
+    --bg-card: #111820;
+    --bg-card-hover: #161d27;
+    --border: #1e2a3a;
+    --text-primary: #d4dae3;
+    --text-secondary: #6b7a8d;
+    --text-muted: #3d4f63;
+    --accent-cyan: #2ee6d6;
+    --accent-cyan-dim: rgba(46, 230, 214, 0.15);
+    --accent-amber: #f5a623;
+    --accent-amber-dim: rgba(245, 166, 35, 0.12);
+    --accent-red: #e64545;
+    --accent-red-dim: rgba(230, 69, 69, 0.12);
+    --accent-green: #34d399;
+    --accent-green-dim: rgba(52, 211, 153, 0.12);
+    --font-mono: 'IBM Plex Mono', monospace;
+    --font-sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Subtle grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 60px 60px;
+    opacity: 0.15;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+  }
+
+  /* Header */
+  header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .header-left h1 {
+    font-family: var(--font-mono);
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-cyan);
+    margin-bottom: 0.3rem;
+  }
+
+  .header-left p {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .status-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    background: var(--bg-card);
+  }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent-green);
+    box-shadow: 0 0 8px var(--accent-green);
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+
+  .status-dot.paused {
+    background: var(--accent-amber);
+    box-shadow: 0 0 8px var(--accent-amber);
+    animation: none;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .btn-toggle {
+    padding: 0.4rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .btn-toggle:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+  }
+
+  .btn-toggle.paused {
+    border-color: var(--accent-amber);
+    color: var(--accent-amber);
+  }
+
+  /* Metric cards */
+  .metrics-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .metric-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.1rem 1.2rem;
+    transition: border-color 0.3s;
+  }
+
+  .metric-card:hover {
+    border-color: var(--text-muted);
+  }
+
+  .metric-label {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+  }
+
+  .metric-value {
+    font-family: var(--font-mono);
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1;
+  }
+
+  .metric-value .unit {
+    font-size: 0.8rem;
+    font-weight: 400;
+    color: var(--text-secondary);
+    margin-left: 0.15rem;
+  }
+
+  .metric-card.alert {
+    border-color: var(--accent-red);
+    background: var(--accent-red-dim);
+  }
+
+  .metric-card.alert .metric-value {
+    color: var(--accent-red);
+  }
+
+  .metric-card.warning {
+    border-color: var(--accent-amber);
+    background: var(--accent-amber-dim);
+  }
+
+  .metric-card.warning .metric-value {
+    color: var(--accent-amber);
+  }
+
+  /* Chart container */
+  .chart-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+
+  .chart-title {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-secondary);
+  }
+
+  .threshold-label {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--accent-amber);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .threshold-line-icon {
+    width: 18px;
+    height: 2px;
+    background: var(--accent-amber);
+    border-radius: 1px;
+  }
+
+  .chart-canvas-wrapper {
+    position: relative;
+    height: 340px;
+  }
+
+  /* Event log */
+  .log-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.5rem;
+  }
+
+  .log-header {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+  }
+
+  .log-entries {
+    max-height: 160px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  .log-entry {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid rgba(30, 42, 58, 0.5);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    animation: fade-in 0.3s ease-out;
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .log-time {
+    color: var(--text-muted);
+    white-space: nowrap;
+    min-width: 75px;
+  }
+
+  .log-msg {
+    color: var(--text-secondary);
+  }
+
+  .log-msg.warn {
+    color: var(--accent-amber);
+  }
+
+  .log-msg.alert {
+    color: var(--accent-red);
+  }
+
+  .log-msg.info {
+    color: var(--accent-cyan);
+  }
+
+  /* Config bar */
+  .config-bar {
+    display: flex;
+    gap: 1.5rem;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .config-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+  }
+
+  .config-item label {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .config-item input, .config-item select {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    padding: 0.3rem 0.5rem;
+    width: 80px;
+  }
+
+  .config-item select {
+    width: auto;
+  }
+
+  .config-item input:focus, .config-item select:focus {
+    outline: none;
+    border-color: var(--accent-cyan);
+  }
+
+  /* No data state */
+  .no-data {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 340px;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  /* Responsive */
+  @media (max-width: 700px) {
+    .metrics-row { grid-template-columns: repeat(2, 1fr); }
+    header { flex-direction: column; gap: 1rem; }
+    .config-bar { flex-direction: column; align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="header-left">
+      <h1>Motor Metrics</h1>
+      <p>Predictive Maintenance Dashboard</p>
+    </div>
+    <div class="header-right">
+      <div class="status-badge">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">LIVE</span>
+      </div>
+      <button class="btn-toggle" id="toggleBtn" onclick="toggleLive()">Pause</button>
+    </div>
+  </header>
+
+  <div class="config-bar">
+    <div class="config-item">
+      <label>Motor</label>
+      <select id="motorSelect">
+        <option value="N20">N20</option>
+      </select>
+    </div>
+    <div class="config-item">
+      <label>Threshold °C</label>
+      <input type="number" id="thresholdInput" value="40" step="0.5">
+    </div>
+    <div class="config-item">
+      <label>Poll interval</label>
+      <select id="intervalSelect">
+        <option value="30000" selected>30s</option>
+        <option value="60000">1 min</option>
+        <option value="300000">5 min</option>
+      </select>
+    </div>
+    <div class="config-item">
+      <label>Time window</label>
+      <select id="windowSelect">
+        <option value="600000">10 min</option>
+        <option value="1800000" selected>30 min</option>
+        <option value="3600000">1 hour</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="metrics-row">
+    <div class="metric-card" id="cardCurrent">
+      <div class="metric-label">Current Temp</div>
+      <div class="metric-value" id="valCurrent">—<span class="unit">°C</span></div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Min / Max</div>
+      <div class="metric-value" id="valMinMax">—<span class="unit">°C</span></div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Data Points</div>
+      <div class="metric-value" id="valCount">0</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Uptime</div>
+      <div class="metric-value" id="valUptime">—</div>
+    </div>
+  </div>
+
+  <div class="chart-section">
+    <div class="chart-header">
+      <span class="chart-title">Temperature over time</span>
+      <span class="threshold-label">
+        <span class="threshold-line-icon"></span>
+        Threshold
+      </span>
+    </div>
+    <div class="chart-canvas-wrapper">
+      <canvas id="tempChart"></canvas>
+      <div class="no-data" id="noData">Waiting for data…</div>
+    </div>
+  </div>
+
+  <div class="log-section">
+    <div class="log-header">Event Log</div>
+    <div class="log-entries" id="logEntries"></div>
+  </div>
+</div>
+
+<script>
+  // ── Configuration ──
+  const API_BASE = 'https://3x22o5s6ob.execute-api.eu-north-1.amazonaws.com';
+
+  let isLive = true;
+  let pollTimer = null;
+  let allData = [];
+  let chart = null;
+
+  // ── Chart Setup ──
+  function initChart() {
+    const ctx = document.getElementById('tempChart').getContext('2d');
+    const threshold = parseFloat(document.getElementById('thresholdInput').value);
+
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        datasets: [
+          {
+            label: 'Temperature',
+            data: [],
+            borderColor: '#2ee6d6',
+            backgroundColor: 'rgba(46, 230, 214, 0.08)',
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            pointHoverBackgroundColor: '#2ee6d6',
+            fill: true,
+            tension: 0.3,
+          },
+          {
+            label: 'Threshold',
+            data: [],
+            borderColor: 'rgba(245, 166, 35, 0.6)',
+            borderWidth: 1.5,
+            borderDash: [6, 4],
+            pointRadius: 0,
+            fill: false,
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+          intersect: false,
+          mode: 'index',
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#111820',
+            borderColor: '#1e2a3a',
+            borderWidth: 1,
+            titleFont: { family: 'IBM Plex Mono', size: 11 },
+            bodyFont: { family: 'IBM Plex Mono', size: 11 },
+            titleColor: '#6b7a8d',
+            bodyColor: '#d4dae3',
+            padding: 10,
+            displayColors: false,
+            callbacks: {
+              label: (ctx) => {
+                if (ctx.datasetIndex === 1) return null;
+                return `${ctx.parsed.y.toFixed(2)} °C`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            type: 'time',
+            time: {
+              tooltipFormat: 'HH:mm:ss',
+              displayFormats: { second: 'HH:mm:ss', minute: 'HH:mm' }
+            },
+            grid: { color: 'rgba(30, 42, 58, 0.5)', drawBorder: false },
+            ticks: {
+              font: { family: 'IBM Plex Mono', size: 10 },
+              color: '#3d4f63',
+              maxTicksLimit: 10,
+            }
+          },
+          y: {
+            grid: { color: 'rgba(30, 42, 58, 0.5)', drawBorder: false },
+            ticks: {
+              font: { family: 'IBM Plex Mono', size: 10 },
+              color: '#3d4f63',
+              callback: (v) => v.toFixed(1) + '°'
+            },
+            min: 15,
+            max: 45,
+          }
+        }
+      }
+    });
+  }
+
+  // ── Data Fetching ──
+  async function fetchData() {
+    const motorId = document.getElementById('motorSelect').value;
+    try {
+      const res = await fetch(`${API_BASE}/metrics?motor_id=${motorId}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      if (data.length === 0) return;
+
+      allData = data.map(d => ({
+        timestamp: new Date(d.timestamp),
+        temperature: parseFloat(d.temperature),
+        activation_time_ms: parseInt(d.activation_time_ms),
+        motor_id: d.motor_id,
+      })).sort((a, b) => a.timestamp - b.timestamp);
+
+      updateChart();
+      updateMetrics();
+      document.getElementById('noData').style.display = 'none';
+
+    } catch (err) {
+      addLog(`Fetch error: ${err.message}`, 'alert');
+    }
+  }
+
+  // ── Chart Update ──
+  function updateChart() {
+    const threshold = parseFloat(document.getElementById('thresholdInput').value);
+    const windowMs = parseInt(document.getElementById('windowSelect').value);
+
+    // Filter to time window
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - windowMs);
+    const windowData = allData.filter(d => d.timestamp >= cutoff);
+    const tempData = windowData.map(d => ({ x: d.timestamp, y: d.temperature }));
+
+    chart.data.datasets[0].data = tempData;
+
+    // Threshold line spans the visible window
+    chart.data.datasets[1].data = [
+      { x: cutoff, y: threshold },
+      { x: now, y: threshold },
+    ];
+
+    // Dynamic Y-axis: always show threshold and data, with padding
+    const temps = windowData.map(d => d.temperature);
+    const dataMin = temps.length > 0 ? Math.min(...temps) : threshold - 5;
+    const dataMax = temps.length > 0 ? Math.max(...temps) : threshold + 5;
+    const yMin = Math.floor(Math.min(dataMin, threshold) - 3);
+    const yMax = Math.ceil(Math.max(dataMax, threshold) + 3);
+    chart.options.scales.y.min = yMin;
+    chart.options.scales.y.max = yMax;
+
+    // Fix X-axis to the window
+    chart.options.scales.x.min = cutoff;
+    chart.options.scales.x.max = now;
+
+    chart.update('none');
+  }
+
+  // ── Metrics Update ──
+  function updateMetrics() {
+    const threshold = parseFloat(document.getElementById('thresholdInput').value);
+    const temps = allData.map(d => d.temperature);
+    const latest = allData[allData.length - 1];
+    const current = latest.temperature;
+    const min = Math.min(...temps);
+    const max = Math.max(...temps);
+
+    // Current temp
+    document.getElementById('valCurrent').innerHTML =
+      `${current.toFixed(2)}<span class="unit">°C</span>`;
+
+    // Threshold coloring
+    const card = document.getElementById('cardCurrent');
+    card.className = 'metric-card';
+    if (current >= threshold) {
+      card.classList.add('alert');
+      addLog(`Temperature ${current.toFixed(2)}°C exceeds threshold ${threshold}°C`, 'alert');
+    } else if (current >= threshold * 0.9) {
+      card.classList.add('warning');
+      addLog(`Temperature ${current.toFixed(2)}°C approaching threshold`, 'warn');
+    }
+
+    // Min / Max
+    document.getElementById('valMinMax').innerHTML =
+      `${min.toFixed(1)} / ${max.toFixed(1)}<span class="unit">°C</span>`;
+
+    // Count
+    document.getElementById('valCount').textContent = allData.length;
+
+    // Uptime from activation_time_ms
+    const uptimeMs = latest.activation_time_ms;
+    const hours = Math.floor(uptimeMs / 3600000);
+    const minutes = Math.floor((uptimeMs % 3600000) / 60000);
+    const seconds = Math.floor((uptimeMs % 60000) / 1000);
+    document.getElementById('valUptime').innerHTML =
+      `${hours}h ${minutes}m ${seconds}s`;
+  }
+
+  // ── Event Log ──
+  function addLog(msg, level = 'info') {
+    const entries = document.getElementById('logEntries');
+    const now = new Date().toLocaleTimeString('en-GB', { hour12: false });
+    const el = document.createElement('div');
+    el.className = 'log-entry';
+    el.innerHTML = `<span class="log-time">${now}</span><span class="log-msg ${level}">${msg}</span>`;
+    entries.prepend(el);
+
+    // Keep max 50 entries
+    while (entries.children.length > 50) {
+      entries.removeChild(entries.lastChild);
+    }
+  }
+
+  // ── Live Toggle ──
+  function toggleLive() {
+    isLive = !isLive;
+    const btn = document.getElementById('toggleBtn');
+    const dot = document.getElementById('statusDot');
+    const txt = document.getElementById('statusText');
+
+    if (isLive) {
+      btn.textContent = 'Pause';
+      btn.classList.remove('paused');
+      dot.classList.remove('paused');
+      txt.textContent = 'LIVE';
+      startPolling();
+      addLog('Live polling resumed', 'info');
+    } else {
+      btn.textContent = 'Resume';
+      btn.classList.add('paused');
+      dot.classList.add('paused');
+      txt.textContent = 'PAUSED';
+      stopPolling();
+      addLog('Live polling paused', 'info');
+    }
+  }
+
+  function startPolling() {
+    stopPolling();
+    const interval = parseInt(document.getElementById('intervalSelect').value);
+    fetchData();
+    pollTimer = setInterval(fetchData, interval);
+  }
+
+  function stopPolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  // ── Config change handlers ──
+  document.getElementById('thresholdInput').addEventListener('change', async () => {
+    const threshold = parseFloat(document.getElementById('thresholdInput').value);
+    const motorId = document.getElementById('motorSelect').value;
+    try {
+      await fetch(`${API_BASE}/config?motor_id=${motorId}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({temperature_threshold: threshold})
+      });
+      addLog(`Threshold updated to ${threshold}°C`, 'info');
+    } catch (err) {
+      addLog(`Failed to save threshold: ${err.message}`, 'alert');
+    }
+    if (allData.length > 0) {
+      updateChart();
+      updateMetrics();
+    }
+  });
+
+  document.getElementById('intervalSelect').addEventListener('change', () => {
+    if (isLive) startPolling();
+  });
+
+  document.getElementById('windowSelect').addEventListener('change', () => {
+    if (allData.length > 0) updateChart();
+  });
+
+  document.getElementById('motorSelect').addEventListener('change', () => {
+    allData = [];
+    loadConfig();
+    if (isLive) startPolling();
+    else fetchData();
+  });
+
+  // ── Load config from API ──
+  async function loadConfig() {
+    const motorId = document.getElementById('motorSelect').value;
+    try {
+      const res = await fetch(`${API_BASE}/config?motor_id=${motorId}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const config = await res.json();
+      if (config.temperature_threshold !== undefined) {
+        document.getElementById('thresholdInput').value = config.temperature_threshold;
+        addLog(`Threshold loaded: ${config.temperature_threshold}°C`, 'info');
+      }
+    } catch (err) {
+      addLog(`Could not load config, using default`, 'warn');
+    }
+  }
+
+  // ── Init ──
+  initChart();
+  addLog('Dashboard initialized', 'info');
+  loadConfig();
+  startPolling();
+</script>
+</body>
+</html>
