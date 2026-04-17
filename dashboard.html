@@ -363,6 +363,119 @@
     border-color: var(--accent-cyan);
   }
 
+  .config-item input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .threshold-readonly {
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+  }
+
+  /* Login modal */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+  .modal-backdrop.visible { display: flex; }
+
+  .modal {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.8rem;
+    width: 320px;
+    max-width: 90%;
+  }
+
+  .modal h3 {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent-cyan);
+    margin-bottom: 1.2rem;
+    font-weight: 600;
+  }
+
+  .modal-field {
+    margin-bottom: 0.9rem;
+  }
+
+  .modal-field label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+    margin-bottom: 0.3rem;
+  }
+
+  .modal-field input {
+    width: 100%;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    padding: 0.5rem 0.7rem;
+  }
+
+  .modal-field input:focus {
+    outline: none;
+    border-color: var(--accent-cyan);
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 0.6rem;
+    margin-top: 1.2rem;
+  }
+
+  .modal-actions button {
+    flex: 1;
+    padding: 0.5rem;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-primary {
+    background: var(--accent-cyan);
+    border: 1px solid var(--accent-cyan);
+    color: var(--bg-primary);
+    font-weight: 600;
+  }
+  .btn-primary:hover { opacity: 0.85; }
+
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+  }
+  .btn-secondary:hover { border-color: var(--text-secondary); color: var(--text-primary); }
+
+  .modal-error {
+    color: var(--accent-red);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    margin-top: 0.6rem;
+    min-height: 1em;
+  }
+
   /* No data state */
   .no-data {
     display: flex;
@@ -395,8 +508,33 @@
         <span id="statusText">LIVE</span>
       </div>
       <button class="btn-toggle" id="toggleBtn" onclick="toggleLive()">Pause</button>
+      <button class="btn-toggle" id="authBtn" onclick="openLoginModal()">Login</button>
     </div>
   </header>
+
+  <!-- Login Modal -->
+  <div class="modal-backdrop" id="loginModal">
+    <div class="modal">
+      <h3 id="modalTitle">Login</h3>
+      <div class="modal-field" id="emailField">
+        <label>Email</label>
+        <input type="email" id="emailInput" autocomplete="username">
+      </div>
+      <div class="modal-field" id="passwordField">
+        <label>Password</label>
+        <input type="password" id="passwordInput" autocomplete="current-password">
+      </div>
+      <div class="modal-field" id="newPasswordField" style="display: none;">
+        <label>New Password</label>
+        <input type="password" id="newPasswordInput" autocomplete="new-password">
+      </div>
+      <div class="modal-error" id="modalError"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="closeLoginModal()">Cancel</button>
+        <button class="btn-primary" id="modalSubmit" onclick="submitLogin()">Login</button>
+      </div>
+    </div>
+  </div>
 
   <div class="config-bar">
     <div class="config-item">
@@ -407,7 +545,8 @@
     </div>
     <div class="config-item">
       <label>Threshold °C</label>
-      <input type="number" id="thresholdInput" value="40" step="0.5">
+      <input type="number" id="thresholdInput" value="40" step="0.5" disabled>
+      <span class="threshold-readonly" id="thresholdReadonly">40</span>
     </div>
     <div class="config-item">
       <label>Poll interval</label>
@@ -469,6 +608,173 @@
 <script>
   // ── Configuration ──
   const API_BASE = 'https://3x22o5s6ob.execute-api.eu-north-1.amazonaws.com';
+
+  // ── Cognito Configuration ──
+  const COGNITO_REGION = 'eu-north-1';
+  const COGNITO_CLIENT_ID = '13tsh1fqeughubuhtr8qqj9j5c';
+  const COGNITO_ENDPOINT = `https://cognito-idp.${COGNITO_REGION}.amazonaws.com/`;
+
+  // ── Auth State ──
+  let idToken = null;           // JWT token, only in memory
+  let challengeSession = null;  // For NEW_PASSWORD_REQUIRED flow
+  let challengeEmail = null;
+
+  // ── Login Modal ──
+  function openLoginModal() {
+    if (idToken) {
+      logout();
+      return;
+    }
+    document.getElementById('loginModal').classList.add('visible');
+    document.getElementById('emailInput').focus();
+  }
+
+  function closeLoginModal() {
+    document.getElementById('loginModal').classList.remove('visible');
+    resetModal();
+  }
+
+  function resetModal() {
+    document.getElementById('modalTitle').textContent = 'Login';
+    document.getElementById('modalSubmit').textContent = 'Login';
+    document.getElementById('emailField').style.display = 'block';
+    document.getElementById('passwordField').style.display = 'block';
+    document.getElementById('newPasswordField').style.display = 'none';
+    document.getElementById('emailInput').value = '';
+    document.getElementById('passwordInput').value = '';
+    document.getElementById('newPasswordInput').value = '';
+    document.getElementById('modalError').textContent = '';
+    challengeSession = null;
+    challengeEmail = null;
+  }
+
+  function showModalError(msg) {
+    document.getElementById('modalError').textContent = msg;
+  }
+
+  async function submitLogin() {
+    if (challengeSession) {
+      await submitNewPassword();
+    } else {
+      await submitInitialAuth();
+    }
+  }
+
+  async function submitInitialAuth() {
+    const email = document.getElementById('emailInput').value.trim();
+    const password = document.getElementById('passwordInput').value;
+    if (!email || !password) {
+      showModalError('Email and password required');
+      return;
+    }
+
+    try {
+      const res = await fetch(COGNITO_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-amz-json-1.1',
+          'X-Amz-Target': 'AWSCognitoIdentityProviderService.InitiateAuth'
+        },
+        body: JSON.stringify({
+          AuthFlow: 'USER_PASSWORD_AUTH',
+          ClientId: COGNITO_CLIENT_ID,
+          AuthParameters: { USERNAME: email, PASSWORD: password }
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showModalError(data.message || 'Login failed');
+        return;
+      }
+
+      if (data.ChallengeName === 'NEW_PASSWORD_REQUIRED') {
+        challengeSession = data.Session;
+        challengeEmail = email;
+        switchToChallengeMode();
+        return;
+      }
+
+      onLoginSuccess(data.AuthenticationResult.IdToken);
+    } catch (err) {
+      showModalError('Network error: ' + err.message);
+    }
+  }
+
+  function switchToChallengeMode() {
+    document.getElementById('modalTitle').textContent = 'Set New Password';
+    document.getElementById('modalSubmit').textContent = 'Set Password';
+    document.getElementById('emailField').style.display = 'none';
+    document.getElementById('passwordField').style.display = 'none';
+    document.getElementById('newPasswordField').style.display = 'block';
+    document.getElementById('modalError').textContent = '';
+    document.getElementById('newPasswordInput').focus();
+  }
+
+  async function submitNewPassword() {
+    const newPassword = document.getElementById('newPasswordInput').value;
+    if (!newPassword || newPassword.length < 8) {
+      showModalError('Password must be at least 8 characters');
+      return;
+    }
+
+    try {
+      const res = await fetch(COGNITO_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-amz-json-1.1',
+          'X-Amz-Target': 'AWSCognitoIdentityProviderService.RespondToAuthChallenge'
+        },
+        body: JSON.stringify({
+          ChallengeName: 'NEW_PASSWORD_REQUIRED',
+          ClientId: COGNITO_CLIENT_ID,
+          Session: challengeSession,
+          ChallengeResponses: {
+            USERNAME: challengeEmail,
+            NEW_PASSWORD: newPassword
+          }
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showModalError(data.message || 'Password change failed');
+        return;
+      }
+      onLoginSuccess(data.AuthenticationResult.IdToken);
+    } catch (err) {
+      showModalError('Network error: ' + err.message);
+    }
+  }
+
+  function onLoginSuccess(token) {
+    idToken = token;
+    closeLoginModal();
+    updateAuthUI();
+    addLog('Logged in successfully', 'info');
+  }
+
+  function logout() {
+    idToken = null;
+    updateAuthUI();
+    addLog('Logged out', 'info');
+  }
+
+  function updateAuthUI() {
+    const input = document.getElementById('thresholdInput');
+    const readonly = document.getElementById('thresholdReadonly');
+    const authBtn = document.getElementById('authBtn');
+
+    if (idToken) {
+      input.style.display = '';
+      input.disabled = false;
+      readonly.style.display = 'none';
+      authBtn.textContent = 'Logout';
+    } else {
+      input.style.display = 'none';
+      input.disabled = true;
+      readonly.style.display = '';
+      authBtn.textContent = 'Login';
+    }
+  }
 
   let isLive = true;
   let pollTimer = null;
@@ -719,15 +1025,29 @@
 
   // ── Config change handlers ──
   document.getElementById('thresholdInput').addEventListener('change', async () => {
+    if (!idToken) {
+      addLog('Login required to change threshold', 'warn');
+      return;
+    }
     const threshold = parseFloat(document.getElementById('thresholdInput').value);
     const motorId = document.getElementById('motorSelect').value;
     try {
-      await fetch(`${API_BASE}/config?motor_id=${motorId}`, {
+      const res = await fetch(`${API_BASE}/config?motor_id=${motorId}`, {
         method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+        },
         body: JSON.stringify({temperature_threshold: threshold})
       });
+      if (res.status === 401) {
+        addLog('Session expired, please log in again', 'warn');
+        logout();
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       addLog(`Threshold updated to ${threshold}°C`, 'info');
+      document.getElementById('thresholdReadonly').textContent = threshold;
     } catch (err) {
       addLog(`Failed to save threshold: ${err.message}`, 'alert');
     }
@@ -761,6 +1081,7 @@
       const config = await res.json();
       if (config.temperature_threshold !== undefined) {
         document.getElementById('thresholdInput').value = config.temperature_threshold;
+        document.getElementById('thresholdReadonly').textContent = config.temperature_threshold;
         addLog(`Threshold loaded: ${config.temperature_threshold}°C`, 'info');
       }
     } catch (err) {
