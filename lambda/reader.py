@@ -8,6 +8,7 @@ table = dynamodb.Table('motor-metrics')
 def lambda_handler(event, context):
     motor_id = event['queryStringParameters']['motor_id']
     response = table.query(KeyConditionExpression=Key('motor_id').eq(motor_id))
+    items = [item for item in response['Items'] if item['timestamp'] != 'CONFIG']
 
     return {
         'statusCode': 200,
@@ -15,5 +16,5 @@ def lambda_handler(event, context):
             'Content-Type': 'application/json',
             'Access-Control-Allow-Origin': '*'
         },
-        'body': json.dumps(response['Items'], default=str)
+        'body': json.dumps(items, default=str)
     }
