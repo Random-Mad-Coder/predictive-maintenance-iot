@@ -368,6 +368,43 @@
     cursor: not-allowed;
   }
 
+  .day-selector-bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .day-buttons {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+
+  .day-btn {
+    padding: 0.3rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .day-btn:hover {
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+  }
+
+  .day-btn.selected {
+    border-color: var(--accent-cyan);
+    background: var(--accent-cyan-dim);
+    color: var(--accent-cyan);
+  }
+
   .threshold-readonly {
     color: var(--text-primary);
     font-family: var(--font-mono);
@@ -564,6 +601,15 @@
         <option value="3600000">1 hour</option>
       </select>
     </div>
+  </div>
+
+  <div class="day-selector-bar" id="daySelectorBar" style="display: none;">
+    <div class="config-item">
+      <label>Week</label>
+      <select id="weekSelect" onchange="renderDayButtons()"></select>
+    </div>
+    <div class="day-buttons" id="dayButtons"></div>
+    <button class="btn-toggle" id="backToLiveBtn" onclick="backToLive()" style="display: none;">Back to Live</button>
   </div>
 
   <div class="metrics-row">
@@ -869,6 +915,99 @@
     });
   }
 
+  // ── History / Day Selection State ──
+  let viewMode = 'live';       // 'live' | 'day'
+  let selectedDay = null;      // z.B. "2026-04-10", bleibt markiert über Moduswechsel hinweg
+  let availableDays = new Set();
+  let availableWeeks = [];
+  let dayViewData = [];
+
+  function getWeekKey(date) {
+    const onejan = new Date(date.getFullYear(), 0, 1);
+    const week = Math.ceil((((date - onejan) / 86400000) + onejan.getDay() + 1) / 7);
+    return `${date.getFullYear()}-W${String(week).padStart(2, '0')}`;
+  }
+
+  function updateAvailableDaysAndWeeks() {
+    availableDays = new Set(allData.map(d => d.timestamp.toISOString().split('T')[0]));
+    availableWeeks = Array.from(
+      new Set(Array.from(availableDays).map(d => getWeekKey(new Date(d))))
+    ).sort();
+    renderWeekSelect();
+  }
+
+  function renderWeekSelect() {
+    const select = document.getElementById('weekSelect');
+    const previous = select.value;
+    select.innerHTML = '';
+    availableWeeks.forEach(week => {
+      const opt = document.createElement('option');
+      opt.value = week;
+      opt.textContent = week;
+      select.appendChild(opt);
+    });
+    if (availableWeeks.includes(previous)) {
+      select.value = previous;
+    } else if (availableWeeks.length > 0) {
+      select.value = availableWeeks[availableWeeks.length - 1];
+    }
+    document.getElementById('daySelectorBar').style.display =
+      availableWeeks.length > 0 ? 'flex' : 'none';
+    renderDayButtons();
+  }
+
+  function renderDayButtons() {
+    const week = document.getElementById('weekSelect').value;
+    const container = document.getElementById('dayButtons');
+    container.innerHTML = '';
+    Array.from(availableDays)
+      .filter(day => getWeekKey(new Date(day)) === week)
+      .sort()
+      .forEach(day => {
+        const btn = document.createElement('button');
+        btn.className = 'day-btn' + (day === selectedDay ? ' selected' : '');
+        btn.textContent = day.slice(5); // "MM-DD"
+        btn.onclick = () => selectDay(day);
+        container.appendChild(btn);
+      });
+  }
+
+  async function selectDay(day) {
+    selectedDay = day;
+    viewMode = 'day';
+    stopPolling();
+    document.getElementById('backToLiveBtn').style.display = '';
+    renderDayButtons();
+
+    const motorId = document.getElementById('motorSelect').value;
+    try {
+      const res = await fetch(`${API_BASE}/metrics?motor_id=${motorId}&date=${day}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      dayViewData = data.map(d => ({
+        timestamp: new Date(d.timestamp),
+        temperature: parseFloat(d.temperature),
+        activation_time_ms: parseInt(d.activation_time_ms),
+        motor_id: d.motor_id,
+      })).sort((a, b) => a.timestamp - b.timestamp);
+
+      updateChart();
+      updateMetrics();
+      addLog(`Showing ${day} (${dayViewData.length} points)`, 'info');
+    } catch (err) {
+      addLog(`Failed to load ${day}: ${err.message}`, 'alert');
+    }
+  }
+
+  function backToLive() {
+    viewMode = 'live';
+    document.getElementById('backToLiveBtn').style.display = 'none';
+    renderDayButtons();
+    updateChart();
+    updateMetrics();
+    if (isLive) startPolling();
+  }
+
   // ── Data Fetching ──
   async function fetchData() {
     const motorId = document.getElementById('motorSelect').value;
@@ -886,6 +1025,7 @@
         motor_id: d.motor_id,
       })).sort((a, b) => a.timestamp - b.timestamp);
 
+      updateAvailableDaysAndWeeks();
       updateChart();
       updateMetrics();
       document.getElementById('noData').style.display = 'none';
@@ -898,46 +1038,48 @@
   // ── Chart Update ──
   function updateChart() {
     const threshold = parseFloat(document.getElementById('thresholdInput').value);
-    const windowMs = parseInt(document.getElementById('windowSelect').value);
+    let plotData, xMin, xMax;
 
-    // Filter to time window
-    const last = allData.length === 0
-      ? new Date()
-      : allData[allData.length - 1].timestamp;
+    if (viewMode === 'day') {
+      plotData = dayViewData;
+      xMin = plotData.length > 0 ? plotData[0].timestamp : new Date();
+      xMax = plotData.length > 0 ? plotData[plotData.length - 1].timestamp : new Date();
+    } else {
+      const windowMs = parseInt(document.getElementById('windowSelect').value);
+      const last = allData.length === 0
+        ? new Date()
+        : allData[allData.length - 1].timestamp;
+      xMin = new Date(last.getTime() - windowMs);
+      xMax = last;
+      plotData = allData.filter(d => d.timestamp >= xMin);
+    }
 
-    const cutoff = new Date(last.getTime() - windowMs);
-    const windowData = allData.filter(d => d.timestamp >= cutoff);
-    const tempData = windowData.map(d => ({ x: d.timestamp, y: d.temperature }));
-
+    const tempData = plotData.map(d => ({ x: d.timestamp, y: d.temperature }));
     chart.data.datasets[0].data = tempData;
-
-    // Threshold line spans the visible window
     chart.data.datasets[1].data = [
-      { x: cutoff, y: threshold },
-      { x: last, y: threshold },
+      { x: xMin, y: threshold },
+      { x: xMax, y: threshold },
     ];
 
-    // Dynamic Y-axis: always show threshold and data, with padding
-    const temps = windowData.map(d => d.temperature);
+    const temps = plotData.map(d => d.temperature);
     const dataMin = temps.length > 0 ? Math.min(...temps) : threshold - 5;
     const dataMax = temps.length > 0 ? Math.max(...temps) : threshold + 5;
-    const yMin = Math.floor(Math.min(dataMin, threshold) - 3);
-    const yMax = Math.ceil(Math.max(dataMax, threshold) + 3);
-    chart.options.scales.y.min = yMin;
-    chart.options.scales.y.max = yMax;
-
-    // Fix X-axis to the window
-    chart.options.scales.x.min = cutoff;
-    chart.options.scales.x.max = last;
+    chart.options.scales.y.min = Math.floor(Math.min(dataMin, threshold) - 3);
+    chart.options.scales.y.max = Math.ceil(Math.max(dataMax, threshold) + 3);
+    chart.options.scales.x.min = xMin;
+    chart.options.scales.x.max = xMax;
 
     chart.update('none');
   }
 
   // ── Metrics Update ──
   function updateMetrics() {
+    const source = viewMode === 'day' ? dayViewData : allData;
+    if (source.length === 0) return;
+
     const threshold = parseFloat(document.getElementById('thresholdInput').value);
-    const temps = allData.map(d => d.temperature);
-    const latest = allData[allData.length - 1];
+    const temps = source.map(d => d.temperature);
+    const latest = source[source.length - 1];
     const current = latest.temperature;
     const min = Math.min(...temps);
     const max = Math.max(...temps);
@@ -962,7 +1104,7 @@
       `${min.toFixed(1)} / ${max.toFixed(1)}<span class="unit">°C</span>`;
 
     // Count
-    document.getElementById('valCount').textContent = allData.length;
+    document.getElementById('valCount').textContent = source.length;
 
     // Uptime from activation_time_ms
     const uptimeMs = latest.activation_time_ms;
